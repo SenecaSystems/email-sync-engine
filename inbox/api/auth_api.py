@@ -3,43 +3,55 @@ import json
 import base64
 
 from datetime import datetime
-from flask import request, g, Blueprint, make_response, Response
+
+from flask import (request, g, Blueprint, make_response, Response,stream_with_context)
 from flask import jsonify as flask_jsonify
 from flask.ext.restful import reqparse
-from sqlalchemy import asc, or_, func
+from sqlalchemy import asc, func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy.orm import subqueryload
 
-from inbox.models import (Account, Message, Block, Part, Thread, Namespace,
-                          Tag, Contact, Calendar, Event, Participant,
-                          Transaction)
+
+from inbox.models.account import Account
+from inbox.models.message import Message
+from inbox.models.block import Block
+from inbox.models.thread import Thread
+from inbox.models.namespace import Namespace
+from inbox.models.contact import Contact
+from inbox.models.calendar import Calendar
+from inbox.models.event import Event
+from inbox.models.transaction import Transaction
+
 from inbox.api.kellogs import APIEncoder
 from inbox.api import filtering
-from inbox.api.validation import (InputError, get_tags, get_attachments,
-                                  get_calendar, get_thread, get_recipients,
-                                  valid_public_id, valid_event,
-                                  valid_event_update, timestamp, boolean,
-                                  bounded_str, view, strict_parse_args, limit,
-                                  valid_event_action, valid_rsvp,
-                                  ValidatableArgument,
-                                  validate_draft_recipients)
+from inbox.api.validation import (valid_account, get_attachments, get_calendar,
+                                  get_recipients, get_draft, valid_public_id,
+                                  valid_event, valid_event_update, timestamp,
+                                  bounded_str, view, strict_parse_args,
+                                  limit, offset, ValidatableArgument,
+                                  strict_bool, validate_draft_recipients,
+                                  valid_delta_object_types, valid_display_name,
+                                  noop_event_update, valid_category_type,
+                                  comma_separated_email_list,
+                                  get_sending_draft)
 from inbox import events, contacts, sendmail
-from inbox.log import get_logger
+from nylas.logging import get_logger
 from inbox.models.constants import MAX_INDEXABLE_LENGTH
-from inbox.models.action_log import schedule_action, ActionError
-from inbox.models.session import InboxSession, session_scope
-from inbox.search.adaptor import NamespaceSearchEngine, SearchEngineError
+from inbox.models.action_log import schedule_action
+from inbox.models.session import global_session_scope
+# from inbox.search.adaptor import NamespaceSearchEngine, SearchEngineError
 from inbox.transactions import delta_sync
 
 from inbox.util.url import provider_from_address
-from inbox.auth import handler_from_provider
+from inbox.auth.base import handler_from_provider
+
 from inbox.basicauth import NotSupportedError
+from inbox.api.err import InputError
+from inbox.api.err import ConflictError
 
-from err import err
+# from inbox.ignition import main_engine
 
-from inbox.ignition import main_engine
-
-engine = main_engine()
+# engine = main_engine()
 
 app = Blueprint(
     'auth_api',
@@ -49,7 +61,7 @@ app = Blueprint(
 
 @app.before_request
 def start():
-    g.db_session = InboxSession(engine)
+    g.db_session = global_session_scope()
     g.log = get_logger()
     g.parser = reqparse.RequestParser(argument_class=ValidatableArgument)
     g.encoder = APIEncoder()
@@ -97,12 +109,12 @@ def login():
 
         reauth = True if data.get('reauth') else False
 
-        with session_scope() as db_session:
+        with global_session_scope() as db_session:
             account = db_session.query(Account).filter_by(
                 email_address=email_address).first()
 
         if account is not None and reauth is False:
-            return err(409, 'Account already logged in!')
+            raise ConflictError('Account already logged in!');
 
         provider = provider_from_address(email_address)
 
@@ -116,7 +128,8 @@ def login():
         return g.encoder.jsonify({'provider': provider, 'response': response,
                                   'email': email_address})
     else:
-        return err(406, 'Email address is required!')
+        # return err(406, 'Email address is required!')
+        raise InputError('Email address is required!')
 
 
 def authorize(email_address, provider, auth_data):
