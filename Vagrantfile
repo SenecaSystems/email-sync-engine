@@ -29,7 +29,10 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   #   "--natdnsproxy1", "on",
   # ]
   config.vm.network "private_network", ip: "192.168.10.200"
+  config.vm.provision :shell, :inline => "echo 'UTC' | tee /etc/timezone && dpkg-reconfigure --frontend noninteractive tzdata"
+  config.vm.provision :shell, :inline => "apt-get --assume-yes install build-essential libssl-dev libffi-dev python-dev"
   config.vm.provision :shell, :inline => "apt-get update -q && cd /vagrant && ./setup.sh"
+
 
   # Share ports 5000 - 5009
   10.times do |n|
