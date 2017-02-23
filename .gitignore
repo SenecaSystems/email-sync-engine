@@ -10,6 +10,7 @@ node_modules
 *.py[cod]
 *.dat
 .DS_Store
+ubuntu-xenial-16.04-cloudimg-console.log
 # C extensions
 *.so
 /tests/log

@@ -11,6 +11,7 @@ from inbox.api.validation import (bounded_str, ValidatableArgument,
                                   strict_parse_args, limit)
 from inbox.api.validation import valid_public_id
 
+from auth_api import app as auth_api
 from ns_api import app as ns_api
 from ns_api import DEFAULT_LIMIT
 
@@ -41,7 +42,8 @@ for code in default_exceptions.iterkeys():
 def auth():
     """ Check for account ID on all non-root URLS """
     if request.path in ('/accounts', '/accounts/', '/') \
-            or request.path.startswith('/w/'):
+            or request.path.startswith('/w/') \
+            or request.path.startswith('/auth/'):
         return
 
     if not request.authorization or not request.authorization.username:
@@ -130,4 +132,5 @@ def logout():
 
 
 app.register_blueprint(ns_api)
+app.register_blueprint(auth_api)
 app.register_blueprint(webhooks_api)  # /w/...
