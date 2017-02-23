@@ -11,7 +11,6 @@ from sqlalchemy import asc, func
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm.exc import NoResultFound
 
-
 from inbox.models.account import Account
 from inbox.models.message import Message
 from inbox.models.block import Block
@@ -38,7 +37,7 @@ from inbox import events, contacts, sendmail
 from nylas.logging import get_logger
 from inbox.models.constants import MAX_INDEXABLE_LENGTH
 from inbox.models.action_log import schedule_action
-from inbox.models.session import global_session_scope
+from inbox.models.session import session_scope_by_shard_id
 # from inbox.search.adaptor import NamespaceSearchEngine, SearchEngineError
 from inbox.transactions import delta_sync
 
@@ -48,6 +47,9 @@ from inbox.auth.base import handler_from_provider
 from inbox.basicauth import NotSupportedError
 from inbox.api.err import InputError
 from inbox.api.err import ConflictError
+from inbox.api.err import err
+
+SHARD_ID = 0
 
 # from inbox.ignition import main_engine
 
@@ -61,7 +63,6 @@ app = Blueprint(
 
 @app.before_request
 def start():
-    g.db_session = global_session_scope()
     g.log = get_logger()
     g.parser = reqparse.RequestParser(argument_class=ValidatableArgument)
     g.encoder = APIEncoder()
@@ -69,9 +70,6 @@ def start():
 
 @app.after_request
 def finish(response):
-    if response.status_code == 200:
-        g.db_session.commit()
-    g.db_session.close()
     return response
 
 
@@ -109,7 +107,7 @@ def login():
 
         reauth = True if data.get('reauth') else False
 
-        with global_session_scope() as db_session:
+        with session_scope_by_shard_id(SHARD_ID) as db_session:
             account = db_session.query(Account).filter_by(
                 email_address=email_address).first()
 
@@ -136,27 +134,34 @@ def authorize(email_address, provider, auth_data):
     auth_info = {}
     auth_info['provider'] = provider
 
-    with session_scope() as db_session:
+    with session_scope_by_shard_id(SHARD_ID) as db_session:
         account = db_session.query(Account).filter_by(
             email_address=email_address).first()
 
-    auth_handler = handler_from_provider(provider)
-    auth_response = auth_handler.auth(auth_data)
+        auth_handler = handler_from_provider(provider)
+        auth_response = auth_handler.auth(auth_data)
 
-    if auth_response is False:
-        return err(403, 'Authorizatisdsdon error!')
+        if auth_response is False:
+            return err(403, 'Authorizatisdsdon error!')
 
-    auth_info.update(auth_response)
-    account = auth_handler.create_account(db_session, email_address, auth_info)
+        auth_info.update(auth_response)
+        account = auth_handler.create_account(email_address, auth_info)
 
-    try:
-        if auth_handler.verify_account(account):
-            db_session.add(account)
-            db_session.commit()
-    except NotSupportedError as e:
-        return err(406, 'Provider not supported!')
+        try:
+            if auth_handler.verify_account(account):
+                account.name = auth_data['name']
 
-    return g.encoder.jsonify({"msg": "Authorization success"})
+                db_session.add(account)
+                db_session.commit()
+
+                return g.encoder.jsonify({
+                    "id": account.namespace.public_id,
+                    "msg": "Authorization successful!"
+                })
+            else:
+                return err(406, 'Could not verify account!')
+        except NotSupportedError as e:
+            return err(406, 'Provider not supported!')
 
 
 @app.route('/gmail', methods=['POST'])
@@ -194,33 +199,28 @@ def custom_auth():
     data = request.get_json(force=True)
     args = []
 
-    if not data.get('email'):
-        return err(406, 'Email address is required!')
+    for key in ['email', 'password', 'imap_server_host', 'smtp_server_host']:
+        if not data.get(key):
+            return err(406, '{0} is required!'.format(key))
 
-    if not data.get('password'):
-        return err(406, 'Password is required!')
+    name = data.get('name') or ''
 
-    if not data.get('imap_server_host'):
-        return err(406, 'Imap server host is required!')
+    imap_server_port = data.get('imap_server_port') or 993
+    smtp_server_port = data.get('smtp_server_port') or 587
 
-    if not data.get('imap_server_port'):
-        imap_server_port = 993
-    else:
-        imap_server_port = data.get('imap_server_port')
-
-    if not data.get('smtp_server_host'):
-        return err(406, 'Smtp server host is required!')
-
-    if not data.get('smtp_server_port'):
-        smtp_server_port = 587
-    else:
-        smtp_server_port = data.get('smtp_server_port')
+    ssl_required = data.get('smtp_server_port') or True
 
     return authorize(data.get('email'), 'custom', {
-        "provider_type": "custom", "email_address": data.get('email'),
-        "password": data.get('password'), "imap_server_host": data.get('imap_server_host'),
-        "imap_server_port": imap_server_port, "smtp_server_host": data.get('smtp_server_host'),
-        "smtp_server_port": smtp_server_port})
+        "provider_type": "custom",
+        "email_address": data.get('email'),
+        "password": data.get('password'),
+        "name": name,
+        "imap_server_host": data.get('imap_server_host'),
+        "imap_server_port": imap_server_port,
+        "smtp_server_host": data.get('smtp_server_host'),
+        "smtp_server_port": smtp_server_port,
+        "ssl_required": ssl_required
+    })
 
 
 @app.route('/generic', methods=['POST'])

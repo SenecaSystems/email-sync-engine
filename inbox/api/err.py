@@ -28,17 +28,20 @@ def log_exception(exc_info, send_to_sentry=True, **kwargs):
         traceback.print_exc()
         print
 
-    new_log_context = create_error_log_context(exc_info)
-    new_log_context.update(kwargs)
+    try:
+        new_log_context = create_error_log_context(exc_info)
+        new_log_context.update(kwargs)
 
-    # guard against programming errors overriding log fields (confusing!)
-    if set(new_log_context.keys()).intersection(
-            set(request.environ.get('log_context', {}))):
-        log.warning("attempt to log more than one error to HTTP request",
-                    request_uid=get_request_uid(request.headers),
-                    **new_log_context)
-    else:
-        request.environ.setdefault('log_context', {}).update(new_log_context)
+        # guard against programming errors overriding log fields (confusing!)
+        if set(new_log_context.keys()).intersection(
+                set(request.environ.get('log_context', {}))):
+            log.warning("attempt to log more than one error to HTTP request",
+                        request_uid=get_request_uid(request.headers),
+                        **new_log_context)
+        else:
+            request.environ.setdefault('log_context', {}).update(new_log_context)
+    except Exception:
+        pass
 
 
 class APIException(Exception):
