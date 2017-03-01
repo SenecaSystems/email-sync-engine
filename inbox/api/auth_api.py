@@ -130,97 +130,110 @@ def login():
         raise InputError('Email address is required!')
 
 
+def verify(email_address, provider, auth_data):
+    auth_info = {'provider': provider}
+
+    auth_handler = handler_from_provider(provider)
+    auth_response = auth_handler.auth(auth_data)
+
+    if auth_response is False:
+        return g.encoder.jsonify({"valid": False})
+
+    auth_info.update(auth_response)
+    account = auth_handler.create_account(email_address, auth_info)
+
+    try:
+        if auth_handler.verify_account(account):
+            return g.encoder.jsonify({"valid": True})
+        else:
+            return g.encoder.jsonify({"valid": False})
+    except:
+        return g.encoder.jsonify({"valid": False})
+
+
 def authorize(email_address, provider, auth_data):
-    auth_info = {}
-    auth_info['provider'] = provider
+    auth_info = {'provider': provider}
 
-    with session_scope_by_shard_id(SHARD_ID) as db_session:
-        account = db_session.query(Account).filter_by(
-            email_address=email_address).first()
+    auth_handler = handler_from_provider(provider)
+    auth_response = auth_handler.auth(auth_data)
 
-        auth_handler = handler_from_provider(provider)
-        auth_response = auth_handler.auth(auth_data)
+    if auth_response is False:
+        return err(403, 'Authorization error!')
 
-        if auth_response is False:
-            return err(403, 'Authorizatisdsdon error!')
+    auth_info.update(auth_response)
+    account = auth_handler.create_account(email_address, auth_info)
 
-        auth_info.update(auth_response)
-        account = auth_handler.create_account(email_address, auth_info)
+    try:
+        if auth_handler.verify_account(account):
+            account.name = auth_data['name']
 
-        try:
-            if auth_handler.verify_account(account):
-                account.name = auth_data['name']
-
+            with session_scope_by_shard_id(SHARD_ID) as db_session:
                 db_session.add(account)
                 db_session.commit()
 
-                return g.encoder.jsonify({
-                    "id": account.namespace.public_id,
-                    "msg": "Authorization successful!"
-                })
-            else:
-                return err(406, 'Could not verify account!')
-        except NotSupportedError as e:
-            return err(406, 'Provider not supported!')
+            return g.encoder.jsonify({
+                "id": account.namespace.public_id,
+                "msg": "Authorization successful!"
+            })
+        else:
+            return err(406, 'Could not verify account!')
+    except NotSupportedError as e:
+        return err(406, 'Provider not supported!')
 
 
 @app.route('/gmail', methods=['POST'])
 def gmail_auth():
     data = request.get_json(force=True)
 
-    if data.get('email'):
-        email_address = data.get('email')
-    else:
+    if not data.get('email'):
         return err(406, 'Email address is required!')
 
-    if data.get('code'):
-        return authorize(email_address, 'gmail', data.get('code'))
-    else:
+    if not data.get('code'):
         return err(406, 'Authorization code is required!')
+
+    if data.get('verify_only'):
+        return verify(data.get('email'), 'gmail', data.get('code'))
+    return authorize(data.get('email'), 'gmail', data.get('code'))
 
 
 @app.route('/outlook', methods=['POST'])
 def outlook_auth():
     data = request.get_json(force=True)
 
-    if data.get('email'):
-        email_address = data.get('email')
-    else:
+    if not data.get('email'):
         return err(406, 'Email address is required!')
 
-    if data.get('code'):
-        return authorize(email_address, 'outlook', data.get('code'))
-    else:
+    if not data.get('code'):
         return err(406, 'Authorization code is required!')
+
+    if data.get('verify_only'):
+        return verify(data.get('email'), 'outlook', data.get('code'))
+    return authorize(data.get('email'), 'outlook', data.get('code'))
 
 
 @app.route('/custom', methods=['POST'])
 def custom_auth():
     data = request.get_json(force=True)
-    args = []
 
     for key in ['email', 'password', 'imap_server_host', 'smtp_server_host']:
         if not data.get(key):
             return err(406, '{0} is required!'.format(key))
 
-    name = data.get('name') or ''
-
-    imap_server_port = data.get('imap_server_port') or 993
-    smtp_server_port = data.get('smtp_server_port') or 587
-
-    ssl_required = data.get('smtp_server_port') or True
-
-    return authorize(data.get('email'), 'custom', {
-        "provider_type": "custom",
-        "email_address": data.get('email'),
-        "password": data.get('password'),
-        "name": name,
-        "imap_server_host": data.get('imap_server_host'),
-        "imap_server_port": imap_server_port,
-        "smtp_server_host": data.get('smtp_server_host'),
-        "smtp_server_port": smtp_server_port,
-        "ssl_required": ssl_required
-    })
+    return (verify if data.get('verify_only') else authorize)(
+        data.get('email'),
+        'custom',
+        {
+            "provider_type":    "custom",
+            "email_address":    data.get('email'),
+            "password":         data.get('password'),
+            "name":             data.get('name') or '',
+            "imap_server_host": data.get('imap_server_host'),
+            "imap_server_port": data.get('imap_server_port') or 993,
+            "smtp_server_host": data.get('smtp_server_host'),
+            "smtp_server_port": data.get('smtp_server_port') or 587,
+            "ssl_required":     data.get('ssl_required') or True
+        }
+    )
 
 
 @app.route('/generic', methods=['POST'])
