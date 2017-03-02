@@ -52,6 +52,12 @@ else
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 5072E1F5;
 fi
 
+# Set default timezone to UTC
+echo 'UTC' | tee /etc/timezone && dpkg-reconfigure --frontend noninteractive tzdata
+
+# Required for cryptography
+apt-get --assume-yes install build-essential libssl-dev libffi-dev python-dev
+
 # Don't fail builds if apt-get update fails (eg due to ksplice being down)
 set +e
 apt-get -qq update

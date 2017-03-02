@@ -1,10 +1,6 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
-# Stripped-down Vagrantfile for development
-
-
-# Vagrantfile API/syntax version. Don't touch unless you know what you're doing!
 VAGRANTFILE_API_VERSION = "2"
 
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
@@ -29,10 +25,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   #   "--natdnsproxy1", "on",
   # ]
   config.vm.network "private_network", ip: "192.168.10.200"
-  config.vm.provision :shell, :inline => "echo 'UTC' | tee /etc/timezone && dpkg-reconfigure --frontend noninteractive tzdata"
-  config.vm.provision :shell, :inline => "apt-get --assume-yes install build-essential libssl-dev libffi-dev python-dev"
   config.vm.provision :shell, :inline => "apt-get update -q && cd /vagrant && ./setup.sh"
-
 
   # Share ports 5000 - 5009
   10.times do |n|
@@ -57,20 +50,13 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       config.vm.synced_folder fname, mount_path
     end
   end
-
-  # See: https://stackoverflow.com/questions/14715678/vagrant-insecure-by-default
-  unless Vagrant.has_plugin?("vagrant-rekey-ssh")
-    warn "------------------- SECURITY WARNING -------------------"
-    warn "Vagrant is insecure by default.  To secure your VM, run:"
-    warn "    vagrant plugin install vagrant-rekey-ssh"
-    warn "--------------------------------------------------------"
-  end
 end
 
 # Local Vagrantfile overrides.  See Vagrantfile.local.example for examples.
 Dir.glob('Vagrantfile.local.d/*').sort.each do |path|
   load path
 end
+
 Dir.glob('Vagrantfile.local').sort.each do |path|
   load path
 end
